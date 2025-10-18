@@ -1,0 +1,90 @@
+version: 2.1
+
+jobs:
+    build_and_push:
+        docker:
+            -   image: cimg/base:stable
+        environment:
+            IMAGE_NAME: ghcr.io/theovauvilliers/wakbook2
+        steps:
+            - checkout
+            - setup_remote_docker
+            -   run:
+                    name: Docker login
+                    command: echo "$CR_PAT" | docker login ghcr.io -u "$CR_USER" --password-stdin
+            -   run:
+                    name: Build image
+                    command: |
+                        IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+                        docker build --target prod -t "$IMAGE_NAME:$IMAGE_TAG" -t "$IMAGE_NAME:latest" -f docker/phpapache/Dockerfile .
+                        echo "IMAGE_TAG=$IMAGE_TAG" >> $BASH_ENV
+            -   run:
+                    name: Push image
+                    command: |
+                        source $BASH_ENV
+                        docker push "$IMAGE_NAME:$IMAGE_TAG"
+                        docker push "$IMAGE_NAME:latest"
+
+    deploy:
+        docker:
+            -   image: cimg/base:stable
+        steps:
+            - checkout
+            -   add_ssh_keys:
+                    fingerprints:
+                        - "SHA256:DLD3vla0MeDNAmd4Z/58IwBlhyJyXxcOD/5f4qkfes0"
+            -   run:
+                    name: Prepare target folder
+                    command: ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "mkdir -p '$SERVER_PATH'"
+            -   run:
+                    name: Upload compose files
+                    command: |
+                        scp -o StrictHostKeyChecking=no ./compose.yaml "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/compose.yaml"
+                        scp -o StrictHostKeyChecking=no ./compose.prod.yaml "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/compose.prod.yaml"
+            -   run:
+                    name: Build .env.runtime locally
+                    command: |
+                        APP_SECRET_ESCAPED=$(printf '%s' "$APP_SECRET" | sed 's/\$/$$/g')
+                        POSTGRES_PASSWORD_ESCAPED=$(printf '%s' "$POSTGRES_PASSWORD" | sed 's/\$/$$/g')
+
+                        printf '%s\n' \
+                          "APP_ENV=prod" \
+                          "APP_SECRET=${APP_SECRET_ESCAPED}" \
+                          "POSTGRES_DB=${POSTGRES_DB}" \
+                          "POSTGRES_USER=${POSTGRES_USER}" \
+                          "POSTGRES_PASSWORD=${POSTGRES_PASSWORD_ESCAPED}" \
+                          "DATABASE_URL=pgsql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ESCAPED}@wakbook-db:5432/${POSTGRES_DB}" \
+                          > .env.runtime
+            -   run:
+                    name: Upload .env.runtime to VPS
+                    command: scp -o StrictHostKeyChecking=no ./.env.runtime "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/.env.runtime"
+            -   run:
+                    name: Deploy to server
+                    command: |
+                        IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+                        ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "
+                          export IMAGE_TAG=$IMAGE_TAG;
+                          cd '$SERVER_PATH' &&
+                          docker login ghcr.io -u \"$CR_USER\" -p \"$CR_PAT\" &&
+                          docker compose -f compose.prod.yaml --env-file .env.runtime pull &&
+                          docker compose -f compose.prod.yaml --env-file .env.runtime up -d --remove-orphans
+                        "
+            -   run:
+                    name: Migrate and warm cache
+                    command: |
+                        ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "
+                          cd '$SERVER_PATH' &&
+                          docker compose -f compose.prod.yaml --env-file .env.runtime exec -T wakbook php bin/console cache:clear --no-warmup &&
+                          docker compose -f compose.prod.yaml --env-file .env.runtime exec -T wakbook php bin/console cache:warmup
+                        "
+workflows:
+    prod:
+        jobs:
+            -   build_and_push:
+                    context: container-registry
+            -   deploy:
+                    context: container-registry
+                    requires: [ build_and_push ]
+                    filters:
+                        branches:
+                            only: main

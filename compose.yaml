@@ -1,0 +1,37 @@
+services:
+    wakbook:
+        build:
+            context: .
+            dockerfile: docker/phpapache/Dockerfile
+            target: dev
+            args:
+                PHP_VERSION: ${PHP_VERSION:-8.4}
+        container_name: wakbook
+        volumes:
+            - .:/var/www/html
+        ports:
+            - "${HTTP_PORT:-8080}:80"
+            - "${HTTPS_PORT:-8443}:443"
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+
+#    wakbook-db:
+#        image: postgres:${POSTGRES_VERSION:-16}-alpine
+#        container_name: wakbook-db
+#        restart: unless-stopped
+#        environment:
+#            POSTGRES_DB: ${POSTGRES_DB:-wakbook}
+#            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+#            POSTGRES_USER: ${POSTGRES_USER:-postgres}
+#        healthcheck:
+#            test: ["CMD", "pg_isready", "-d", "${POSTGRES_DB:-wakbook}", "-U", "${POSTGRES_USER:-postgres}"]
+#            timeout: 5s
+#            retries: 5
+#            start_period: 60s
+#        ports:
+#            - "${POSTGRES_PORT:-5432}:5432"
+#        volumes:
+#            - database_data:/var/lib/postgresql/data:rw
+#
+#volumes:
+#    database_data:

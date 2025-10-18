@@ -1,0 +1,36 @@
+services:
+    wakbook:
+        image: ghcr.io/theovauvilliers/wakbook2:${IMAGE_TAG:-latest}
+        container_name: wakbook
+        restart: unless-stopped
+        env_file: [ .env.runtime ]
+#        depends_on: [ wakbook-db ]
+        volumes: [ ]
+        ports: [ ]
+        networks: [ proxy ]
+        labels:
+            - traefik.enable=true
+            - traefik.http.routers.wakbook.rule=Host(`wakbook.theovauvilliers.dev`)
+            - traefik.http.routers.wakbook.entrypoints=websecure
+            - traefik.http.routers.wakbook.tls.certresolver=cloudflare
+            - traefik.http.routers.wakbook.middlewares=secure-headers@file
+            - traefik.http.services.wakbook.loadbalancer.server.port=80
+
+#    wakbook-db:
+#        image: postgres:16-alpine
+#        restart: unless-stopped
+#        environment:
+#            POSTGRES_DB: ${POSTGRES_DB}
+#            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+#            POSTGRES_USER: ${POSTGRES_USER}
+#        volumes:
+#            - database_data:/var/lib/postgresql/data:rw
+#        networks: [ proxy ]
+#
+#volumes:
+#    database_data:
+
+networks:
+    proxy:
+        external: true
+        name: proxy
