@@ -3,9 +3,11 @@ services:
         image: ghcr.io/theovauvilliers/wakbook2:${IMAGE_TAG:-latest}
         container_name: wakbook
         restart: unless-stopped
-        env_file: [ .env.runtime ]
+        env_file:
+            - .env.runtime
 #        depends_on: [ wakbook-db ]
-        volumes: [ ]
+        volumes:
+            - ./.env.runtime:/var/www/html/.env:ro
         ports: [ ]
         networks: [ proxy ]
         labels:

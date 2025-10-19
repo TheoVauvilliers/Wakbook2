@@ -1,9 +1,39 @@
 version: 2.1
 
-jobs:
-    build_and_push:
+executors:
+    default:
         docker:
             -   image: cimg/base:stable
+
+jobs:
+    build_and_test:
+        executor: default
+        environment:
+            IMAGE_NAME: ghcr.io/theovauvilliers/wakbook2
+        steps:
+            - checkout
+            - setup_remote_docker
+            -   run:
+                    name: Build CI image
+                    command: |
+                        set -euo pipefail
+                        IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+                        docker build --target ci \
+                          -t "$IMAGE_NAME:ci-$IMAGE_TAG" \
+                          -f docker/phpapache/Dockerfile .
+            -   run:
+                    name: Run tests
+                    command: |
+                        set -euo pipefail
+                        IMAGE_TAG="${CIRCLE_SHA1:0:7}"
+                        docker run --rm "$IMAGE_NAME:ci-$IMAGE_TAG" sh -lc '
+                          ./vendor/bin/php-cs-fixer fix --dry-run --diff &&
+                          ./vendor/bin/phpstan analyse --memory-limit=1G &&
+                          ./vendor/bin/phpunit --colors=never --coverage-text
+                        '
+
+    build_and_push:
+        executor: default
         environment:
             IMAGE_NAME: ghcr.io/theovauvilliers/wakbook2
         steps:
@@ -11,42 +41,62 @@ jobs:
             - setup_remote_docker
             -   run:
                     name: Docker login
-                    command: echo "$CR_PAT" | docker login ghcr.io -u "$CR_USER" --password-stdin
-            -   run:
-                    name: Build image
                     command: |
+                        echo "$CR_PAT" | docker login ghcr.io -u "$CR_USER" --password-stdin
+            -   run:
+                    name: Build PROD image
+                    command: |
+                        set -euo pipefail
                         IMAGE_TAG="${CIRCLE_SHA1:0:7}"
-                        docker build --target prod -t "$IMAGE_NAME:$IMAGE_TAG" -t "$IMAGE_NAME:latest" -f docker/phpapache/Dockerfile .
-                        echo "IMAGE_TAG=$IMAGE_TAG" >> $BASH_ENV
+                        docker build --target prod \
+                          -t "$IMAGE_NAME:$IMAGE_TAG" \
+                          -t "$IMAGE_NAME:latest" \
+                          -f docker/phpapache/Dockerfile .
             -   run:
-                    name: Push image
+                    name: Push image and capture digest
                     command: |
-                        source $BASH_ENV
+                        set -euo pipefail
+                        IMAGE_TAG="${CIRCLE_SHA1:0:7}"
                         docker push "$IMAGE_NAME:$IMAGE_TAG"
                         docker push "$IMAGE_NAME:latest"
+                        digest_ref="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_NAME:$IMAGE_TAG" || true)"
+                        if [ -z "${digest_ref:-}" ]; then
+                          docker pull "$IMAGE_NAME:$IMAGE_TAG" >/dev/null
+                          digest_ref="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_NAME:$IMAGE_TAG")"
+                        fi
+                        DIGEST="${digest_ref#*@}"
+                        echo "DIGEST=$DIGEST" | tee digest.env
+            -   persist_to_workspace:
+                    root: .
+                    paths:
+                        - digest.env
 
     deploy:
-        docker:
-            -   image: cimg/base:stable
+        executor: default
         steps:
             - checkout
             -   add_ssh_keys:
                     fingerprints:
                         - "SHA256:DLD3vla0MeDNAmd4Z/58IwBlhyJyXxcOD/5f4qkfes0"
+            -   attach_workspace:
+                    at: /tmp/ws
             -   run:
                     name: Prepare target folder
-                    command: ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "mkdir -p '$SERVER_PATH'"
+                    command: |
+                        set -euo pipefail
+                        ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "mkdir -p '$SERVER_PATH'"
             -   run:
                     name: Upload compose files
                     command: |
+                        set -euo pipefail
                         scp -o StrictHostKeyChecking=no ./compose.yaml "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/compose.yaml"
                         scp -o StrictHostKeyChecking=no ./compose.prod.yaml "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/compose.prod.yaml"
             -   run:
                     name: Build .env.runtime locally
                     command: |
+                        set -euo pipefail
                         APP_SECRET_ESCAPED=$(printf '%s' "$APP_SECRET" | sed 's/\$/$$/g')
                         POSTGRES_PASSWORD_ESCAPED=$(printf '%s' "$POSTGRES_PASSWORD" | sed 's/\$/$$/g')
-
                         printf '%s\n' \
                           "APP_ENV=prod" \
                           "APP_SECRET=${APP_SECRET_ESCAPED}" \
@@ -54,37 +104,67 @@ jobs:
                           "POSTGRES_USER=${POSTGRES_USER}" \
                           "POSTGRES_PASSWORD=${POSTGRES_PASSWORD_ESCAPED}" \
                           "DATABASE_URL=pgsql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ESCAPED}@wakbook-db:5432/${POSTGRES_DB}" \
+                          "DEFAULT_URI=https://wakbook.theovauvilliers.dev" \
                           > .env.runtime
             -   run:
-                    name: Upload .env.runtime to VPS
-                    command: scp -o StrictHostKeyChecking=no ./.env.runtime "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/.env.runtime"
+                    name: Upload .env.runtime to server
+                    command: |
+                        set -euo pipefail
+                        scp -o StrictHostKeyChecking=no ./.env.runtime "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/.env.runtime"
             -   run:
                     name: Deploy to server
                     command: |
-                        IMAGE_TAG="${CIRCLE_SHA1:0:7}"
-                        ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "
-                          export IMAGE_TAG=$IMAGE_TAG;
-                          cd '$SERVER_PATH' &&
-                          docker login ghcr.io -u \"$CR_USER\" -p \"$CR_PAT\" &&
-                          docker compose -f compose.prod.yaml --env-file .env.runtime pull &&
-                          docker compose -f compose.prod.yaml --env-file .env.runtime up -d --remove-orphans
-                        "
+                        set -euo pipefail
+                        source /tmp/ws/digest.env
+                        IMAGE_NAME=ghcr.io/theovauvilliers/wakbook2
+                        ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "IMAGE_NAME='$IMAGE_NAME' DIGEST='$DIGEST' SERVER_PATH='$SERVER_PATH' CR_USER='$CR_USER' CR_PAT='$CR_PAT' bash -s" \<<'REMOTE'
+                        set -euo pipefail
+                        cd "$SERVER_PATH"
+                        docker login ghcr.io -u "$CR_USER" -p "$CR_PAT"
+                        sed -i "s|image: $IMAGE_NAME.*|image: $IMAGE_NAME@$DIGEST|g" compose.prod.yaml
+                        docker compose -f compose.prod.yaml pull
+                        docker compose -f compose.prod.yaml up -d --remove-orphans --force-recreate
+                        REMOTE
+
             -   run:
                     name: Migrate and warm cache
                     command: |
-                        ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "
-                          cd '$SERVER_PATH' &&
-                          docker compose -f compose.prod.yaml --env-file .env.runtime exec -T wakbook php bin/console cache:clear --no-warmup &&
-                          docker compose -f compose.prod.yaml --env-file .env.runtime exec -T wakbook php bin/console cache:warmup
-                        "
+                        set -euo pipefail
+                        ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "SERVER_PATH='$SERVER_PATH' bash -s" \<<'REMOTE'
+                        set -euo pipefail
+                        cd "$SERVER_PATH"
+                        docker compose -f compose.prod.yaml exec -T wakbook sh -lc 'env | grep -E "^(APP_ENV|APP_SECRET|DATABASE_URL)=" || true'
+                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console cache:clear --no-warmup --no-debug
+                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console cache:warmup --no-debug
+                        REMOTE
+
 workflows:
-    prod:
+    version: 2
+    pr_only_build_and_test:
         jobs:
+            -   build_and_test:
+                    context: container-registry
+                    filters:
+                        branches:
+                            ignore: main
+    main_full_pipeline:
+        jobs:
+            -   build_and_test:
+                    context: container-registry
+                    filters:
+                        branches:
+                            only: main
             -   build_and_push:
                     context: container-registry
+                    requires:
+                        - build_and_test
+                    filters:
+                        branches:
+                            only: main
             -   deploy:
                     context: container-registry
-                    requires: [ build_and_push ]
+                    requires:
+                        - build_and_push
                     filters:
                         branches:
                             only: main

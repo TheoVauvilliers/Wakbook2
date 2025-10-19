@@ -6,8 +6,8 @@ ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 
 RUN apt-get update && apt-get install -y \
     git unzip libicu-dev libzip-dev libpng-dev libjpeg-dev libfreetype6-dev \
-    libxml2-dev libpq-dev wget openssl curl \
- && docker-php-ext-install intl opcache exif zip pdo pdo_pgsql \
+    libxml2-dev libpq-dev libsqlite3-dev wget openssl curl \
+ && docker-php-ext-install intl opcache exif zip pdo pdo_pgsql pdo_sqlite \
  && docker-php-ext-enable exif pdo_pgsql \
  && rm -rf /var/lib/apt/lists/*
 
@@ -20,6 +20,8 @@ RUN wget https://get.symfony.com/cli/installer -O - | bash \
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
  && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
  && a2enmod rewrite headers
+
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
 WORKDIR /var/www/html
 
@@ -47,18 +49,38 @@ RUN echo 'export NVM_DIR="$HOME/.nvm"' >> /home/phpuser/.bashrc \
 
 EXPOSE 80 443
 
+# ---- CI ----
+FROM base AS ci
+
+COPY composer.json composer.lock* symfony.lock* ./
+RUN composer install --no-interaction --prefer-dist --no-progress --no-scripts
+
+RUN pecl install pcov && docker-php-ext-enable pcov
+ENV PCOV_ENABLED=1 XDEBUG_MODE=off
+
+COPY . .
+
+RUN composer dump-autoload --no-interaction
+
+RUN printf '%s\n' \
+  'APP_ENV=test' \
+  'APP_SECRET=ci' \
+  'DATABASE_URL=sqlite:///%kernel.project_dir%/var/test.db' \
+  'MESSENGER_TRANSPORT_DSN=sync://' \
+  > .env
+
 # ---- PROD ----
 FROM base AS prod
 
 COPY composer.json composer.lock* symfony.lock* ./
-
 RUN composer install --no-dev --no-interaction --prefer-dist --no-progress --no-scripts
 
 COPY . .
 
-RUN composer dump-autoload --no-dev --classmap-authoritative
+RUN composer dump-autoload --no-dev --classmap-authoritative --no-interaction
 
 #RUN npm ci && npm run build
 
 EXPOSE 80
+
 CMD ["apache2-foreground"]
