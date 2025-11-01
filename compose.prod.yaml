@@ -4,12 +4,14 @@ services:
         container_name: wakbook
         restart: unless-stopped
         env_file:
-            - .env.runtime
-#        depends_on: [ wakbook-db ]
+            - .env
+        depends_on: [ wakbook-db ]
         volumes:
-            - ./.env.runtime:/var/www/html/.env:ro
+            - ./.env:/var/www/html/.env:ro
         ports: [ ]
-        networks: [ proxy ]
+        networks:
+            - wakbook
+            - proxy
         labels:
             - traefik.enable=true
             - traefik.http.routers.wakbook.rule=Host(`wakbook.theovauvilliers.dev`)
@@ -18,21 +20,27 @@ services:
             - traefik.http.routers.wakbook.middlewares=secure-headers@file
             - traefik.http.services.wakbook.loadbalancer.server.port=80
 
-#    wakbook-db:
-#        image: postgres:16-alpine
-#        restart: unless-stopped
-#        environment:
-#            POSTGRES_DB: ${POSTGRES_DB}
-#            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-#            POSTGRES_USER: ${POSTGRES_USER}
-#        volumes:
-#            - database_data:/var/lib/postgresql/data:rw
-#        networks: [ proxy ]
-#
-#volumes:
-#    database_data:
+    wakbook-db:
+        image: postgres:16-alpine
+        restart: unless-stopped
+        container_name: wakbook-db
+        env_file:
+            -   .env
+        environment:
+            POSTGRES_DB: ${POSTGRES_DB}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+            POSTGRES_USER: ${POSTGRES_USER}
+        volumes:
+            - wakbook_db_data:/var/lib/postgresql/data:rw
+        networks:
+            - wakbook
+
+volumes:
+    wakbook_db_data:
 
 networks:
+    wakbook:
+        name: wakbook
     proxy:
         external: true
         name: proxy

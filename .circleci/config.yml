@@ -92,7 +92,7 @@ jobs:
                         scp -o StrictHostKeyChecking=no ./compose.yaml "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/compose.yaml"
                         scp -o StrictHostKeyChecking=no ./compose.prod.yaml "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/compose.prod.yaml"
             -   run:
-                    name: Build .env.runtime locally
+                    name: Build .env locally
                     command: |
                         set -euo pipefail
                         APP_SECRET_ESCAPED=$(printf '%s' "$APP_SECRET" | sed 's/\$/$$/g')
@@ -105,12 +105,12 @@ jobs:
                           "POSTGRES_PASSWORD=${POSTGRES_PASSWORD_ESCAPED}" \
                           "DATABASE_URL=pgsql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ESCAPED}@wakbook-db:5432/${POSTGRES_DB}" \
                           "DEFAULT_URI=https://wakbook.theovauvilliers.dev" \
-                          > .env.runtime
+                          > .env
             -   run:
-                    name: Upload .env.runtime to server
+                    name: Upload .env to server
                     command: |
                         set -euo pipefail
-                        scp -o StrictHostKeyChecking=no ./.env.runtime "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/.env.runtime"
+                        scp -o StrictHostKeyChecking=no ./.env "$SERVER_USER@$SERVER_HOST:$SERVER_PATH/.env"
             -   run:
                     name: Deploy to server
                     command: |
@@ -134,20 +134,23 @@ jobs:
                         set -euo pipefail
                         cd "$SERVER_PATH"
                         docker compose -f compose.prod.yaml exec -T wakbook sh -lc 'env | grep -E "^(APP_ENV|APP_SECRET|DATABASE_URL)=" || true'
+                        docker compose -f compose.prod.yaml exec -T wakbook composer install --no-dev --no-interaction --no-progress --optimize-autoloader
+                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console doctrine:database:create --if-not-exists
+                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console doctrine:migrations:migrate --no-interaction --all-or-nothing
                         docker compose -f compose.prod.yaml exec -T wakbook php bin/console cache:clear --no-warmup --no-debug
                         docker compose -f compose.prod.yaml exec -T wakbook php bin/console cache:warmup --no-debug
                         REMOTE
 
 workflows:
     version: 2
-    pr_only_build_and_test:
+    test_pipeline:
         jobs:
             -   build_and_test:
                     context: container-registry
                     filters:
                         branches:
                             ignore: main
-    main_full_pipeline:
+    deploy_pipeline:
         jobs:
             -   build_and_test:
                     context: container-registry
