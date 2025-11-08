@@ -1,12 +1,12 @@
 services:
-    wakbook:
+    wakbook-api:
         build:
             context: .
             dockerfile: docker/phpapache/Dockerfile
             target: dev
             args:
                 PHP_VERSION: ${PHP_VERSION:-8.4}
-        container_name: wakbook
+        container_name: wakbook-api
         volumes:
             - .:/var/www/html
         ports:

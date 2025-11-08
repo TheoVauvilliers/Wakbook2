@@ -1,7 +1,7 @@
 services:
-    wakbook:
-        image: ghcr.io/theovauvilliers/wakbook2:${IMAGE_TAG:-latest}
-        container_name: wakbook
+    wakbook-api:
+        image: ghcr.io/theovauvilliers/wakbook-api:${IMAGE_TAG:-latest}
+        container_name: wakbook-api
         restart: unless-stopped
         env_file:
             - .env
@@ -14,11 +14,11 @@ services:
             - proxy
         labels:
             - traefik.enable=true
-            - traefik.http.routers.wakbook.rule=Host(`wakbook.theovauvilliers.dev`)
-            - traefik.http.routers.wakbook.entrypoints=websecure
-            - traefik.http.routers.wakbook.tls.certresolver=cloudflare
-            - traefik.http.routers.wakbook.middlewares=secure-headers@file
-            - traefik.http.services.wakbook.loadbalancer.server.port=80
+            - traefik.http.routers.wakbook-api.rule=Host(`wakbook-api.theovauvilliers.dev`)
+            - traefik.http.routers.wakbook-api.entrypoints=websecure
+            - traefik.http.routers.wakbook-api.tls.certresolver=cloudflare
+            - traefik.http.routers.wakbook-api.middlewares=secure-headers@file
+            - traefik.http.services.wakbook-api.loadbalancer.server.port=80
 
     wakbook-db:
         image: postgres:16-alpine

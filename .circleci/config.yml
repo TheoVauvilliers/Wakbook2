@@ -9,7 +9,7 @@ jobs:
     build_and_test:
         executor: default
         environment:
-            IMAGE_NAME: ghcr.io/theovauvilliers/wakbook2
+            IMAGE_NAME: ghcr.io/theovauvilliers/wakbook-api
         steps:
             - checkout
             - setup_remote_docker
@@ -35,7 +35,7 @@ jobs:
     build_and_push:
         executor: default
         environment:
-            IMAGE_NAME: ghcr.io/theovauvilliers/wakbook2
+            IMAGE_NAME: ghcr.io/theovauvilliers/wakbook-api
         steps:
             - checkout
             - setup_remote_docker
@@ -104,7 +104,7 @@ jobs:
                           "POSTGRES_USER=${POSTGRES_USER}" \
                           "POSTGRES_PASSWORD=${POSTGRES_PASSWORD_ESCAPED}" \
                           "DATABASE_URL=pgsql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ESCAPED}@wakbook-db:5432/${POSTGRES_DB}" \
-                          "DEFAULT_URI=https://wakbook.theovauvilliers.dev" \
+                          "DEFAULT_URI=https://wakbook-api.theovauvilliers.dev" \
                           > .env
             -   run:
                     name: Upload .env to server
@@ -116,7 +116,7 @@ jobs:
                     command: |
                         set -euo pipefail
                         source /tmp/ws/digest.env
-                        IMAGE_NAME=ghcr.io/theovauvilliers/wakbook2
+                        IMAGE_NAME=ghcr.io/theovauvilliers/wakbook-api
                         ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "IMAGE_NAME='$IMAGE_NAME' DIGEST='$DIGEST' SERVER_PATH='$SERVER_PATH' CR_USER='$CR_USER' CR_PAT='$CR_PAT' bash -s" \<<'REMOTE'
                         set -euo pipefail
                         cd "$SERVER_PATH"
@@ -133,12 +133,12 @@ jobs:
                         ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" "SERVER_PATH='$SERVER_PATH' bash -s" \<<'REMOTE'
                         set -euo pipefail
                         cd "$SERVER_PATH"
-                        docker compose -f compose.prod.yaml exec -T wakbook sh -lc 'env | grep -E "^(APP_ENV|APP_SECRET|DATABASE_URL)=" || true'
-                        docker compose -f compose.prod.yaml exec -T wakbook composer install --no-dev --no-interaction --no-progress --optimize-autoloader
-                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console doctrine:database:create --if-not-exists
-                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console doctrine:migrations:migrate --no-interaction --all-or-nothing
-                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console cache:clear --no-warmup --no-debug
-                        docker compose -f compose.prod.yaml exec -T wakbook php bin/console cache:warmup --no-debug
+                        docker compose -f compose.prod.yaml exec -T wakbook-api sh -lc 'env | grep -E "^(APP_ENV|APP_SECRET|DATABASE_URL)=" || true'
+                        docker compose -f compose.prod.yaml exec -T wakbook-api composer install --no-dev --no-interaction --no-progress --optimize-autoloader
+                        docker compose -f compose.prod.yaml exec -T wakbook-api php bin/console doctrine:database:create --if-not-exists
+                        docker compose -f compose.prod.yaml exec -T wakbook-api php bin/console doctrine:migrations:migrate --no-interaction --all-or-nothing
+                        docker compose -f compose.prod.yaml exec -T wakbook-api php bin/console cache:clear --no-warmup --no-debug
+                        docker compose -f compose.prod.yaml exec -T wakbook-api php bin/console cache:warmup --no-debug
                         REMOTE
 
 workflows:
